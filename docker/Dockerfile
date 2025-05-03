@@ -11,14 +11,14 @@ RUN go get -u golang.org/x/lint/golint
 COPY go.mod .
 COPY go.sum .
 
-# For development it's useful to have kasparov and kaspad from filesystem,
+# For development it's useful to have hoosat from filesystem,
 # but for deployment we should use the one in github
-RUN go mod edit -dropreplace github.com/kaspanet/kaspad
-ARG KASPAD_VERSION
-ARG KASPAD_REPOSITORY='github.com/kaspanet/kaspad'
-RUN if [ -n "${KASPAD_VERSION}" ]; then \
-        # use replace instead of require - to propagate into nested dependancies \
-        go mod edit -replace "github.com/kaspanet/kaspad=$KASPAD_REPOSITORY@$KASPAD_VERSION"; \
+RUN go mod edit -dropreplace github.com/Hoosat-Oy/HTND
+ARG HOOSAT_VERSION='latest'
+ARG HOOSAT_REPOSITORY='github.com/Hoosat-Oy/HTND'
+RUN if [ -n "${HOOSAT_VERSION}" ]; then \
+    # use replace instead of require - to propagate into nested dependancies \
+    go mod edit -replace "github.com/Hoosat-Oy/HTND=$HOOSAT_REPOSITORY@$HOOSAT_VERSION"; \
     fi
 
 RUN go mod download

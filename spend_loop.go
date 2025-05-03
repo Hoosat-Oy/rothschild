@@ -114,7 +114,7 @@ func checkTransactions(utxosChangedNotificationChan <-chan *appmessage.UTXOsChan
 	}
 }
 
-const balanceEpsilon = 10_000         // 10,000 sompi = 0.0001 kaspa
+const balanceEpsilon = 10_000         // 10,000 sompi = 0.0001 Hoosat
 const feeAmount = balanceEpsilon * 10 // use high fee amount, because can have a large number of inputs
 
 var stats struct {
