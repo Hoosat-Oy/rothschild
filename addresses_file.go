@@ -4,11 +4,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/kaspanet/go-secp256k1"
 	"io/ioutil"
 	"os"
 
-	"github.com/kaspanet/kaspad/util"
+	"github.com/Hoosat-Oy/HTND/util"
+	"github.com/kaspanet/go-secp256k1"
 
 	"github.com/pkg/errors"
 )

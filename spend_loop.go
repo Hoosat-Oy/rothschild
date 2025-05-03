@@ -10,20 +10,20 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/kaspanet/kaspad/domain/consensus/utils/consensushashing"
+	"github.com/Hoosat-Oy/HTND/domain/consensus/utils/consensushashing"
 
-	"github.com/kaspanet/kaspad/domain/consensus/model/externalapi"
-	"github.com/kaspanet/kaspad/domain/consensus/utils/constants"
-	"github.com/kaspanet/kaspad/domain/consensus/utils/subnetworks"
-	"github.com/kaspanet/kaspad/domain/consensus/utils/transactionid"
-	"github.com/kaspanet/kaspad/domain/consensus/utils/txscript"
-	"github.com/kaspanet/kaspad/infrastructure/network/rpcclient"
+	"github.com/Hoosat-Oy/HTND/domain/consensus/model/externalapi"
+	"github.com/Hoosat-Oy/HTND/domain/consensus/utils/constants"
+	"github.com/Hoosat-Oy/HTND/domain/consensus/utils/subnetworks"
+	"github.com/Hoosat-Oy/HTND/domain/consensus/utils/transactionid"
+	"github.com/Hoosat-Oy/HTND/domain/consensus/utils/txscript"
+	"github.com/Hoosat-Oy/HTND/infrastructure/network/rpcclient"
 
+	"github.com/Hoosat-Oy/HTND/app/appmessage"
+	"github.com/Hoosat-Oy/HTND/util"
 	"github.com/kaspanet/go-secp256k1"
-	"github.com/kaspanet/kaspad/app/appmessage"
 
-	utxopkg "github.com/kaspanet/kaspad/domain/consensus/utils/utxo"
-	"github.com/kaspanet/kaspad/util"
+	utxopkg "github.com/Hoosat-Oy/HTND/domain/consensus/utils/utxo"
 	"github.com/pkg/errors"
 )
 
@@ -160,35 +160,32 @@ func maybeSendTransaction(client *rpcclient.RPCClient, addresses *addressesList,
 		return false, nil
 	}
 
-	spawn("sendTransaction", func() {
-		transactionID, err := sendTransaction(client, rpcTransaction)
-		if err != nil {
-			errMessage := err.Error()
-			if !strings.Contains(errMessage, "orphan transaction") &&
-				!strings.Contains(errMessage, "is already in the mempool") &&
-				!strings.Contains(errMessage, "is an orphan") &&
-				!strings.Contains(errMessage, "already spent by transaction") {
-				panic(errors.Wrapf(err, "error sending transaction: %s", err))
-			}
-			log.Warnf("Double spend error: %s", err)
-		} else {
-			log.Infof("Sent transaction %s worth %f kaspa with %d inputs and %d outputs", transactionID,
-				float64(sendAmount)/constants.SompiPerKaspa, len(rpcTransaction.Inputs), len(rpcTransaction.Outputs))
-			func() {
-				stats.Lock()
-				defer stats.Unlock()
-
-				stats.numTxs++
-				timePast := time.Since(stats.since)
-				if timePast > 10*time.Second {
-					log.Infof("Tx rate: %f/sec", float64(stats.numTxs)/timePast.Seconds())
-					stats.numTxs = 0
-					stats.since = time.Now()
-				}
-			}()
+	transactionID, err := sendTransaction(client, rpcTransaction)
+	if err != nil {
+		errMessage := err.Error()
+		if !strings.Contains(errMessage, "orphan transaction") &&
+			!strings.Contains(errMessage, "is already in the mempool") &&
+			!strings.Contains(errMessage, "is an orphan") &&
+			!strings.Contains(errMessage, "already spent by transaction") {
+			panic(errors.Wrapf(err, "error sending transaction: %s", err))
 		}
-	})
+		log.Warnf("Double spend error: %s", err)
+	} else {
+		log.Infof("Sent transaction %s worth %f hoosat with %d inputs and %d outputs", transactionID,
+			float64(sendAmount)/constants.SompiPerHoosat, len(rpcTransaction.Inputs), len(rpcTransaction.Outputs))
+		func() {
+			stats.Lock()
+			defer stats.Unlock()
 
+			stats.numTxs++
+			timePast := time.Since(stats.since)
+			if timePast > 10*time.Second {
+				log.Infof("Tx rate: %f/sec", float64(stats.numTxs)/timePast.Seconds())
+				stats.numTxs = 0
+				stats.since = time.Now()
+			}
+		}()
+	}
 	updateState(availableUTXOs, selectedUTXOs)
 
 	return true, nil
@@ -213,6 +210,7 @@ func fetchSpendableUTXOs(client *rpcclient.RPCClient, address string) (map[appme
 	}
 	return spendableUTXOs, nil
 }
+
 func isUTXOSpendable(entry *appmessage.UTXOsByAddressesEntry, virtualSelectedParentBlueScore uint64) bool {
 	blockDAAScore := entry.UTXOEntry.BlockDAAScore
 	if !entry.UTXOEntry.IsCoinbase {
@@ -272,6 +270,10 @@ func selectUTXOs(utxos map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry, amou
 	selectedValue = uint64(0)
 
 	for outpoint, utxo := range utxos {
+		if _, isPending := pendingOutpoints[outpoint]; isPending {
+			continue
+		}
+
 		outpointCopy := outpoint
 		selectedUTXOs = append(selectedUTXOs, &appmessage.UTXOsByAddressesEntry{
 			Outpoint:  &outpointCopy,
@@ -285,8 +287,7 @@ func selectUTXOs(utxos map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry, amou
 
 		const maxInputs = 100
 		if len(selectedUTXOs) == maxInputs {
-			log.Infof("Selected %d UTXOs so sending the transaction with %d sompis instead "+
-				"of %d", maxInputs, selectedValue, amountToSend)
+			log.Infof("Selected %d UTXOs so sending the transaction with %d sompis instead of %d", maxInputs, selectedValue, amountToSend)
 			break
 		}
 	}
@@ -377,7 +378,11 @@ func generateTransaction(keyPair *secp256k1.SchnorrKeyPair, selectedUTXOs []*app
 }
 
 func sendTransaction(client *rpcclient.RPCClient, rpcTransaction *appmessage.RPCTransaction) (string, error) {
-	submitTransactionResponse, err := client.SubmitTransaction(rpcTransaction, false)
+	tx, err := appmessage.RPCTransactionToDomainTransaction(rpcTransaction)
+	if err != nil {
+		return "", errors.Wrapf(err, "error submitting transaction")
+	}
+	submitTransactionResponse, err := client.SubmitTransaction(rpcTransaction, consensushashing.TransactionID(tx).String(), false)
 	if err != nil {
 		return "", errors.Wrapf(err, "error submitting transaction")
 	}

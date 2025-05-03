@@ -1,7 +1,7 @@
 {
-	"myPrivateKey": "f9229af503f6ce870f32076cb687c99879d8ba115ae67bae25ed32ad2efb277f",
-	"myAddress": "kaspatest:qqqzaytu3mcrnlu7vchfw7zt0kcft6e265zc9gercp40f3w5ntc0wgwkpy0az",
+	"myPrivateKey": "7c401147cb2cbebadb49529f980c7ab94ac248f86ef4a5a3e63d428fe8550b46",
+	"myAddress": "hoosattest:qqxe7rmtdvjc04vhdyvf5lnyn09et35m0hv2u7va9kr08mfshl3u6vlvq7pgm",
 	"spendAddresses": [
-		"kaspatest:qqqzaytu3mcrnlu7vchfw7zt0kcft6e265zc9gercp40f3w5ntc0wgwkpy0az"
+		"hoosattest:qqxe7rmtdvjc04vhdyvf5lnyn09et35m0hv2u7va9kr08mfshl3u6vlvq7pgm"
 	]
 }
