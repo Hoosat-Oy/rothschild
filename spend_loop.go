@@ -160,6 +160,7 @@ func maybeSendTransaction(client *rpcclient.RPCClient, addresses *addressesList,
 		return false, nil
 	}
 
+	setPending(availableUTXOs, selectedUTXOs)
 	transactionID, err := sendTransaction(client, rpcTransaction)
 	if err != nil {
 		errMessage := err.Error()
@@ -169,7 +170,6 @@ func maybeSendTransaction(client *rpcclient.RPCClient, addresses *addressesList,
 			!strings.Contains(errMessage, "already spent by transaction") {
 			panic(errors.Wrapf(err, "error sending transaction: %s", err))
 		}
-		log.Warnf("Double spend error: %s", err)
 	} else {
 		log.Infof("Sent transaction %s worth %f hoosat with %d inputs and %d outputs", transactionID,
 			float64(sendAmount)/constants.SompiPerHoosat, len(rpcTransaction.Inputs), len(rpcTransaction.Outputs))
@@ -186,7 +186,6 @@ func maybeSendTransaction(client *rpcclient.RPCClient, addresses *addressesList,
 			}
 		}()
 	}
-	updateState(availableUTXOs, selectedUTXOs)
 
 	return true, nil
 }
@@ -203,6 +202,9 @@ func fetchSpendableUTXOs(client *rpcclient.RPCClient, address string) (map[appme
 
 	spendableUTXOs := make(map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry, 0)
 	for _, entry := range getUTXOsByAddressesResponse.Entries {
+		if _, isPending := pendingOutpoints[*entry.Outpoint]; isPending {
+			continue
+		}
 		if !isUTXOSpendable(entry, dagInfo.VirtualDAAScore) {
 			continue
 		}
@@ -221,12 +223,21 @@ func isUTXOSpendable(entry *appmessage.UTXOsByAddressesEntry, virtualSelectedPar
 	return blockDAAScore+coinbaseMaturity < virtualSelectedParentBlueScore
 }
 
-func updateState(availableUTXOs map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry,
+func setPending(availableUTXOs map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry,
 	selectedUTXOs []*appmessage.UTXOsByAddressesEntry) {
 
 	for _, utxo := range selectedUTXOs {
 		pendingOutpoints[*utxo.Outpoint] = time.Now()
 		delete(availableUTXOs, *utxo.Outpoint)
+	}
+}
+
+func unsetPending(availableUTXOs map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry,
+	selectedUTXOs []*appmessage.UTXOsByAddressesEntry) {
+
+	for _, utxo := range selectedUTXOs {
+		availableUTXOs[*utxo.Outpoint] = utxo.UTXOEntry
+		delete(pendingOutpoints, *utxo.Outpoint)
 	}
 }
 
