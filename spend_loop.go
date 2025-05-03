@@ -191,6 +191,10 @@ func maybeSendTransaction(client *rpcclient.RPCClient, addresses *addressesList,
 }
 
 func fetchSpendableUTXOs(client *rpcclient.RPCClient, address string) (map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry, error) {
+	// Clean the pending.
+	for k := range pendingOutpoints {
+		delete(pendingOutpoints, k)
+	}
 	getUTXOsByAddressesResponse, err := client.GetUTXOsByAddresses([]string{address})
 	if err != nil {
 		return nil, err
@@ -202,9 +206,6 @@ func fetchSpendableUTXOs(client *rpcclient.RPCClient, address string) (map[appme
 
 	spendableUTXOs := make(map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry, 0)
 	for _, entry := range getUTXOsByAddressesResponse.Entries {
-		if _, isPending := pendingOutpoints[*entry.Outpoint]; isPending {
-			continue
-		}
 		if !isUTXOSpendable(entry, dagInfo.VirtualDAAScore) {
 			continue
 		}
