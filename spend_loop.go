@@ -56,7 +56,7 @@ func spendLoop(client *rpcclient.RPCClient, addresses *addressesList,
 					os.Exit(1)
 				}
 			}()
-
+			// fmt.Printf("UTXOs: %d\n", len(utxos))
 			hasFunds, err := maybeSendTransaction(client, addresses, utxos)
 			if err != nil {
 				panic(err)
@@ -161,31 +161,34 @@ func maybeSendTransaction(client *rpcclient.RPCClient, addresses *addressesList,
 	}
 
 	setPending(availableUTXOs, selectedUTXOs)
-	transactionID, err := sendTransaction(client, rpcTransaction)
-	if err != nil {
-		errMessage := err.Error()
-		if !strings.Contains(errMessage, "orphan transaction") &&
-			!strings.Contains(errMessage, "is already in the mempool") &&
-			!strings.Contains(errMessage, "is an orphan") &&
-			!strings.Contains(errMessage, "already spent by transaction") {
-			panic(errors.Wrapf(err, "error sending transaction: %s", err))
-		}
-	} else {
-		log.Infof("Sent transaction %s worth %f hoosat with %d inputs and %d outputs", transactionID,
-			float64(sendAmount)/constants.SompiPerHoosat, len(rpcTransaction.Inputs), len(rpcTransaction.Outputs))
-		func() {
-			stats.Lock()
-			defer stats.Unlock()
-
-			stats.numTxs++
-			timePast := time.Since(stats.since)
-			if timePast > 10*time.Second {
-				log.Infof("Tx rate: %f/sec", float64(stats.numTxs)/timePast.Seconds())
-				stats.numTxs = 0
-				stats.since = time.Now()
+	spawn("sendTransaction", func() {
+		transactionID, err := sendTransaction(client, rpcTransaction)
+		if err != nil {
+			errMessage := err.Error()
+			if !strings.Contains(errMessage, "orphan transaction") &&
+				!strings.Contains(errMessage, "is already in the mempool") &&
+				!strings.Contains(errMessage, "is an orphan") &&
+				!strings.Contains(errMessage, "already spent by transaction") {
+				panic(errors.Wrapf(err, "error sending transaction: %s", err))
 			}
-		}()
-	}
+		} else {
+			log.Infof("Sent transaction %s worth %f hoosat with %d inputs and %d outputs", transactionID,
+				float64(sendAmount)/constants.SompiPerHoosat, len(rpcTransaction.Inputs), len(rpcTransaction.Outputs))
+			unsetPending(availableUTXOs, selectedUTXOs)
+			func() {
+				stats.Lock()
+				defer stats.Unlock()
+
+				stats.numTxs++
+				timePast := time.Since(stats.since)
+				if timePast > 10*time.Second {
+					log.Infof("Tx rate: %f/sec", float64(stats.numTxs)/timePast.Seconds())
+					stats.numTxs = 0
+					stats.since = time.Now()
+				}
+			}()
+		}
+	})
 
 	return true, nil
 }
