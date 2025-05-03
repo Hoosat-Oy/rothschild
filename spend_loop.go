@@ -232,7 +232,6 @@ func setPending(availableUTXOs map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEnt
 
 	for _, utxo := range selectedUTXOs {
 		pendingOutpoints[*utxo.Outpoint] = time.Now()
-		delete(availableUTXOs, *utxo.Outpoint)
 	}
 }
 
@@ -240,7 +239,6 @@ func unsetPending(availableUTXOs map[appmessage.RPCOutpoint]*appmessage.RPCUTXOE
 	selectedUTXOs []*appmessage.UTXOsByAddressesEntry) {
 
 	for _, utxo := range selectedUTXOs {
-		availableUTXOs[*utxo.Outpoint] = utxo.UTXOEntry
 		delete(pendingOutpoints, *utxo.Outpoint)
 	}
 }
