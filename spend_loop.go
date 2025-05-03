@@ -96,7 +96,7 @@ func checkTransactions(utxosChangedNotificationChan <-chan *appmessage.UTXOsChan
 				}
 
 				log.Infof("Output %s:%d accepted. Time since send: %s",
-					removed.Outpoint.TransactionID, removed.Outpoint.Index, time.Now().Sub(sendTime))
+					removed.Outpoint.TransactionID, removed.Outpoint.Index, time.Since(sendTime))
 
 				delete(pendingOutpoints, *removed.Outpoint)
 			}
@@ -106,7 +106,7 @@ func checkTransactions(utxosChangedNotificationChan <-chan *appmessage.UTXOsChan
 	}
 
 	for pendingOutpoint, txTime := range pendingOutpoints {
-		timeSince := time.Now().Sub(txTime)
+		timeSince := time.Since(txTime)
 		if timeSince > 10*time.Minute {
 			log.Tracef("Outpoint %s:%d is pending for %s",
 				pendingOutpoint.TransactionID, pendingOutpoint.Index, timeSince)
