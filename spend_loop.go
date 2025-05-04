@@ -40,6 +40,7 @@ func spendLoop(client *rpcclient.RPCClient, addresses *addressesList,
 		if err != nil {
 			panic(err)
 		}
+		fmt.Printf("Initial UTXO count %d\n", len(utxos))
 
 		cfg := activeConfig()
 		ticker := time.NewTicker(time.Duration(cfg.TransactionInterval) * time.Millisecond)
@@ -65,7 +66,7 @@ func spendLoop(client *rpcclient.RPCClient, addresses *addressesList,
 			checkTransactions(utxosChangedNotificationChan)
 
 			if !hasFunds {
-				log.Infof("No funds. Refetching UTXO set.")
+				log.Infof("No spendable UTXOs. Refetching UTXO set.")
 				utxos, err = fetchSpendableUTXOs(client, addresses.myAddress.EncodeAddress())
 				if err != nil {
 					panic(err)
