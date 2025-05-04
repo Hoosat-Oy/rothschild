@@ -40,7 +40,7 @@ func spendLoop(client *rpcclient.RPCClient, addresses *addressesList,
 		if err != nil {
 			panic(err)
 		}
-		fmt.Printf("Initial UTXO count %d\n", len(utxos))
+		log.Infof("Initial UTXO count %d\n", len(utxos))
 
 		cfg := activeConfig()
 		ticker := time.NewTicker(time.Duration(cfg.TransactionInterval) * time.Millisecond)
