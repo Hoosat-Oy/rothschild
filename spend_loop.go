@@ -110,6 +110,7 @@ func checkTransactions(utxosChangedNotificationChan <-chan *appmessage.UTXOsChan
 	}
 
 	pendingOutpointsMutex.Lock()
+	defer pendingOutpointsMutex.Unlock()
 	for pendingOutpoint, txTime := range pendingOutpoints {
 		timeSince := time.Since(txTime)
 		if timeSince > 10*time.Minute {
@@ -117,7 +118,6 @@ func checkTransactions(utxosChangedNotificationChan <-chan *appmessage.UTXOsChan
 				pendingOutpoint.TransactionID, pendingOutpoint.Index, timeSince)
 		}
 	}
-	pendingOutpointsMutex.Unlock()
 }
 
 const balanceEpsilon = 10_000         // 10,000 sompi = 0.0001 Hoosat
@@ -201,12 +201,12 @@ func maybeSendTransaction(client *rpcclient.RPCClient, addresses *addressesList,
 
 func fetchSpendableUTXOs(client *rpcclient.RPCClient, address string) (map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry, error) {
 	// Clean the pending.
-	// pendingOutpointsMutex.Lock()
-	// for k := range pendingOutpoints {
-	// 	delete(pendingOutpoints, k)
-	// }
-	// log.Infof("Cleared the pending Outpoints")
-	// pendingOutpointsMutex.Unlock()
+	pendingOutpointsMutex.Lock()
+	for k := range pendingOutpoints {
+		delete(pendingOutpoints, k)
+	}
+	log.Infof("Cleared the pending Outpoints")
+	pendingOutpointsMutex.Unlock()
 	getUTXOsByAddressesResponse, err := client.GetUTXOsByAddresses([]string{address})
 	if err != nil {
 		return nil, err
