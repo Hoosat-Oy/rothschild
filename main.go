@@ -46,7 +46,7 @@ func main() {
 		panic(err)
 	}
 
-	client.SetTimeout(5 * time.Minute)
+	client.SetTimeout(20 * time.Minute)
 
 	utxosChangedNotificationChan := make(chan *appmessage.UTXOsChangedNotificationMessage, 100)
 	err = client.RegisterForUTXOsChangedNotifications([]string{addresses.myAddress.EncodeAddress()},
