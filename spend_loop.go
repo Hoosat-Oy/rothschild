@@ -94,16 +94,16 @@ func checkTransactions(utxosChangedNotificationChan <-chan *appmessage.UTXOsChan
 	for !isDone {
 		select {
 		case notification := <-utxosChangedNotificationChan:
+			pendingOutpointsMutex.Lock()
 			for _, removed := range notification.Removed {
-				pendingOutpointsMutex.Lock()
 				sendTime, ok := pendingOutpoints[*removed.Outpoint]
 				if ok {
 					log.Infof("Output %s:%d accepted. Time since send: %s",
 						removed.Outpoint.TransactionID, removed.Outpoint.Index, time.Since(sendTime))
 					delete(pendingOutpoints, *removed.Outpoint)
 				}
-				pendingOutpointsMutex.Unlock()
 			}
+			pendingOutpointsMutex.Unlock()
 		default:
 			isDone = true
 		}
