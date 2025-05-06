@@ -95,16 +95,13 @@ func checkTransactions(utxosChangedNotificationChan <-chan *appmessage.UTXOsChan
 		select {
 		case notification := <-utxosChangedNotificationChan:
 			for _, removed := range notification.Removed {
-				sendTime, ok := pendingOutpoints[*removed.Outpoint]
-				if !ok {
-					continue // this is coinbase transaction paying to our address or some transaction from an old run
-				}
-
-				log.Infof("Output %s:%d accepted. Time since send: %s",
-					removed.Outpoint.TransactionID, removed.Outpoint.Index, time.Since(sendTime))
-
 				pendingOutpointsMutex.Lock()
-				delete(pendingOutpoints, *removed.Outpoint)
+				sendTime, ok := pendingOutpoints[*removed.Outpoint]
+				if ok {
+					log.Infof("Output %s:%d accepted. Time since send: %s",
+						removed.Outpoint.TransactionID, removed.Outpoint.Index, time.Since(sendTime))
+					delete(pendingOutpoints, *removed.Outpoint)
+				}
 				pendingOutpointsMutex.Unlock()
 			}
 		default:
