@@ -27,7 +27,10 @@ import (
 	"github.com/pkg/errors"
 )
 
-var pendingOutpoints = map[appmessage.RPCOutpoint]time.Time{}
+var (
+	pendingOutpoints      = make(map[appmessage.RPCOutpoint]time.Time)
+	pendingOutpointsMutex sync.Mutex
+)
 
 func spendLoop(client *rpcclient.RPCClient, addresses *addressesList,
 	utxosChangedNotificationChan <-chan *appmessage.UTXOsChangedNotificationMessage) <-chan struct{} {
@@ -68,6 +71,7 @@ func spendLoop(client *rpcclient.RPCClient, addresses *addressesList,
 			if !hasFunds {
 				log.Infof("No spendable UTXOs. Refetching UTXO set.")
 				utxos, err = fetchSpendableUTXOs(client, addresses.myAddress.EncodeAddress())
+				log.Infof("Refetched UTXO count %d", len(utxos))
 				if err != nil {
 					panic(err)
 				}
@@ -99,13 +103,16 @@ func checkTransactions(utxosChangedNotificationChan <-chan *appmessage.UTXOsChan
 				log.Infof("Output %s:%d accepted. Time since send: %s",
 					removed.Outpoint.TransactionID, removed.Outpoint.Index, time.Since(sendTime))
 
+				pendingOutpointsMutex.Lock()
 				delete(pendingOutpoints, *removed.Outpoint)
+				pendingOutpointsMutex.Unlock()
 			}
 		default:
 			isDone = true
 		}
 	}
 
+	pendingOutpointsMutex.Lock()
 	for pendingOutpoint, txTime := range pendingOutpoints {
 		timeSince := time.Since(txTime)
 		if timeSince > 10*time.Minute {
@@ -113,6 +120,7 @@ func checkTransactions(utxosChangedNotificationChan <-chan *appmessage.UTXOsChan
 				pendingOutpoint.TransactionID, pendingOutpoint.Index, timeSince)
 		}
 	}
+	pendingOutpointsMutex.Unlock()
 }
 
 const balanceEpsilon = 10_000         // 10,000 sompi = 0.0001 Hoosat
@@ -196,9 +204,11 @@ func maybeSendTransaction(client *rpcclient.RPCClient, addresses *addressesList,
 
 func fetchSpendableUTXOs(client *rpcclient.RPCClient, address string) (map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry, error) {
 	// Clean the pending.
+	pendingOutpointsMutex.Lock()
 	for k := range pendingOutpoints {
 		delete(pendingOutpoints, k)
 	}
+	pendingOutpointsMutex.Unlock()
 	getUTXOsByAddressesResponse, err := client.GetUTXOsByAddresses([]string{address})
 	if err != nil {
 		return nil, err
@@ -230,7 +240,8 @@ func isUTXOSpendable(entry *appmessage.UTXOsByAddressesEntry, virtualSelectedPar
 
 func setPending(availableUTXOs map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry,
 	selectedUTXOs []*appmessage.UTXOsByAddressesEntry) {
-
+	pendingOutpointsMutex.Lock()
+	defer pendingOutpointsMutex.Unlock()
 	for _, utxo := range selectedUTXOs {
 		pendingOutpoints[*utxo.Outpoint] = time.Now()
 	}
@@ -238,7 +249,8 @@ func setPending(availableUTXOs map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEnt
 
 func unsetPending(availableUTXOs map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry,
 	selectedUTXOs []*appmessage.UTXOsByAddressesEntry) {
-
+	pendingOutpointsMutex.Lock()
+	defer pendingOutpointsMutex.Unlock()
 	for _, utxo := range selectedUTXOs {
 		delete(pendingOutpoints, *utxo.Outpoint)
 	}
