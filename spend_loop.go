@@ -295,6 +295,9 @@ func selectUTXOs(utxos map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry, amou
 	selectedUTXOs = []*appmessage.UTXOsByAddressesEntry{}
 	selectedValue = uint64(0)
 
+	pendingOutpointsMutex.Lock() // LOCK HERE
+	defer pendingOutpointsMutex.Unlock()
+
 	for outpoint, utxo := range utxos {
 		if _, isPending := pendingOutpoints[outpoint]; isPending {
 			continue
