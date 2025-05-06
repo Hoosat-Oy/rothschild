@@ -71,7 +71,7 @@ func spendLoop(client *rpcclient.RPCClient, addresses *addressesList,
 			if !hasFunds {
 				log.Infof("No spendable UTXOs. Refetching UTXO set.")
 				utxos, err = fetchSpendableUTXOs(client, addresses.myAddress.EncodeAddress())
-				log.Infof("Refetched UTXO count %d", len(utxos))
+				log.Infof("New Spendable UTXO count %d", len(utxos))
 				if err != nil {
 					panic(err)
 				}
@@ -204,11 +204,12 @@ func maybeSendTransaction(client *rpcclient.RPCClient, addresses *addressesList,
 
 func fetchSpendableUTXOs(client *rpcclient.RPCClient, address string) (map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry, error) {
 	// Clean the pending.
-	pendingOutpointsMutex.Lock()
-	for k := range pendingOutpoints {
-		delete(pendingOutpoints, k)
-	}
-	pendingOutpointsMutex.Unlock()
+	// pendingOutpointsMutex.Lock()
+	// for k := range pendingOutpoints {
+	// 	delete(pendingOutpoints, k)
+	// }
+	// log.Infof("Cleared the pending Outpoints")
+	// pendingOutpointsMutex.Unlock()
 	getUTXOsByAddressesResponse, err := client.GetUTXOsByAddresses([]string{address})
 	if err != nil {
 		return nil, err
@@ -217,7 +218,7 @@ func fetchSpendableUTXOs(client *rpcclient.RPCClient, address string) (map[appme
 	if err != nil {
 		return nil, err
 	}
-
+	log.Infof("Checking if UTXO is spendable")
 	spendableUTXOs := make(map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry, 0)
 	for _, entry := range getUTXOsByAddressesResponse.Entries {
 		if !isUTXOSpendable(entry, dagInfo.VirtualDAAScore) {
