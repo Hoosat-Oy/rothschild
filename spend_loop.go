@@ -50,7 +50,7 @@ func spendLoop(client *rpcclient.RPCClient, addresses *addressesList,
 		for range ticker.C {
 			healthChan := make(chan struct{})
 			go func() {
-				timer := time.NewTimer(5 * time.Minute)
+				timer := time.NewTimer(1 * time.Minute)
 				defer timer.Stop()
 				select {
 				case <-healthChan:
@@ -70,10 +70,18 @@ func spendLoop(client *rpcclient.RPCClient, addresses *addressesList,
 
 			if !hasFunds {
 				log.Infof("No spendable UTXOs. Refetching UTXO set.")
-				utxos, err = fetchSpendableUTXOs(client, addresses.myAddress.EncodeAddress())
-				log.Infof("New Spendable UTXO count %d", len(utxos))
-				if err != nil {
-					panic(err)
+
+				for {
+					var err error
+					utxos, err = fetchSpendableUTXOs(client, addresses.myAddress.EncodeAddress())
+
+					if err == nil {
+						log.Infof("New Spendable UTXO count %d", len(utxos))
+						break
+					}
+
+					log.Warnf("Failed to fetch UTXOs: %v. Retrying in 2s...", err)
+					time.Sleep(2 * time.Second)
 				}
 			}
 
