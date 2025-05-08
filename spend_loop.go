@@ -305,59 +305,32 @@ func selectUTXOs(
 ) {
 	const maxInputs = 100
 
-	type utxoItem struct {
-		outpoint appmessage.RPCOutpoint
-		entry    *appmessage.RPCUTXOEntry
-	}
-
-	// Extract valid UTXOs with the lock held briefly
-	var utxoList []utxoItem
-	pendingOutpointsMutex.Lock()
-	utxoList = make([]utxoItem, 0, len(utxos))
-	for outpoint, entry := range utxos {
-		if _, isPending := pendingOutpoints[outpoint]; !isPending {
-			utxoList = append(utxoList, utxoItem{outpoint, entry})
-		}
-	}
-	pendingOutpointsMutex.Unlock()
-
 	selectedUTXOs = make([]*appmessage.UTXOsByAddressesEntry, 0, maxInputs)
 	selectedValue = 0
 
-	// Greedily pick the largest UTXOs until amountToSend is met or maxInputs is reached
-	for len(selectedUTXOs) < maxInputs && selectedValue < amountToSend {
-		var maxIdx = -1
-		var maxAmount uint64 = 0
+	pendingOutpointsMutex.Lock()
+	defer pendingOutpointsMutex.Unlock()
 
-		// Find the largest remaining UTXO
-		for i, item := range utxoList {
-			if item.entry.Amount > maxAmount {
-				maxAmount = item.entry.Amount
-				maxIdx = i
-			}
+	for outpoint, entry := range utxos {
+		if _, isPending := pendingOutpoints[outpoint]; isPending {
+			continue
 		}
 
-		if maxIdx == -1 {
-			// No more UTXOs available
+		outpointCopy := outpoint
+		selectedUTXOs = append(selectedUTXOs, &appmessage.UTXOsByAddressesEntry{
+			Outpoint:  &outpointCopy,
+			UTXOEntry: entry,
+		})
+		selectedValue += entry.Amount
+
+		if selectedValue >= amountToSend {
 			break
 		}
 
-		// Add selected UTXO
-		selected := utxoList[maxIdx]
-		outpointCopy := selected.outpoint
-		selectedUTXOs = append(selectedUTXOs, &appmessage.UTXOsByAddressesEntry{
-			Outpoint:  &outpointCopy,
-			UTXOEntry: selected.entry,
-		})
-		selectedValue += selected.entry.Amount
-
-		// Remove used UTXO (swap-delete for efficiency)
-		utxoList[maxIdx] = utxoList[len(utxoList)-1]
-		utxoList = utxoList[:len(utxoList)-1]
-	}
-
-	if len(selectedUTXOs) == maxInputs && selectedValue < amountToSend {
-		log.Infof("Selected %d UTXOs so sending the transaction with %d sompis instead of %d", maxInputs, selectedValue, amountToSend)
+		if len(selectedUTXOs) == maxInputs {
+			log.Infof("Selected %d UTXOs so sending the transaction with %d sompis instead of %d", maxInputs, selectedValue, amountToSend)
+			break
+		}
 	}
 
 	return selectedUTXOs, selectedValue, nil
