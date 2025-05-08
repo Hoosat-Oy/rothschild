@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -311,7 +310,7 @@ func selectUTXOs(
 		entry    *appmessage.RPCUTXOEntry
 	}
 
-	// Collect UTXOs while holding the lock as briefly as possible
+	// Extract valid UTXOs with the lock held briefly
 	var utxoList []utxoItem
 	pendingOutpointsMutex.Lock()
 	utxoList = make([]utxoItem, 0, len(utxos))
@@ -322,33 +321,39 @@ func selectUTXOs(
 	}
 	pendingOutpointsMutex.Unlock()
 
-	log.Infof("Selectable UTXO count %d\n", len(utxoList))
-
-	// If input count is very small, sorting is cheap. Otherwise use a heap.
-	if len(utxoList) <= maxInputs {
-		sort.Slice(utxoList, func(i, j int) bool {
-			return utxoList[i].entry.Amount > utxoList[j].entry.Amount
-		})
-	} else {
-		// Use partial heap if we're dealing with large input sizes
-		sort.SliceStable(utxoList, func(i, j int) bool {
-			return utxoList[i].entry.Amount > utxoList[j].entry.Amount
-		})
-	}
-
 	selectedUTXOs = make([]*appmessage.UTXOsByAddressesEntry, 0, maxInputs)
+	selectedValue = 0
 
-	for i := 0; i < len(utxoList) && len(selectedUTXOs) < maxInputs; i++ {
-		item := utxoList[i]
-		outpointCopy := item.outpoint
-		selectedUTXOs = append(selectedUTXOs, &appmessage.UTXOsByAddressesEntry{
-			Outpoint:  &outpointCopy,
-			UTXOEntry: item.entry,
-		})
-		selectedValue += item.entry.Amount
-		if selectedValue >= amountToSend {
+	// Greedily pick the largest UTXOs until amountToSend is met or maxInputs is reached
+	for len(selectedUTXOs) < maxInputs && selectedValue < amountToSend {
+		var maxIdx = -1
+		var maxAmount uint64 = 0
+
+		// Find the largest remaining UTXO
+		for i, item := range utxoList {
+			if item.entry.Amount > maxAmount {
+				maxAmount = item.entry.Amount
+				maxIdx = i
+			}
+		}
+
+		if maxIdx == -1 {
+			// No more UTXOs available
 			break
 		}
+
+		// Add selected UTXO
+		selected := utxoList[maxIdx]
+		outpointCopy := selected.outpoint
+		selectedUTXOs = append(selectedUTXOs, &appmessage.UTXOsByAddressesEntry{
+			Outpoint:  &outpointCopy,
+			UTXOEntry: selected.entry,
+		})
+		selectedValue += selected.entry.Amount
+
+		// Remove used UTXO (swap-delete for efficiency)
+		utxoList[maxIdx] = utxoList[len(utxoList)-1]
+		utxoList = utxoList[:len(utxoList)-1]
 	}
 
 	if len(selectedUTXOs) == maxInputs && selectedValue < amountToSend {
