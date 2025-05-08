@@ -306,23 +306,22 @@ func selectUTXOs(utxos map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry, amou
 		outpoint appmessage.RPCOutpoint
 		entry    *appmessage.RPCUTXOEntry
 	}
-
+	pendingOutpointsMutex.Lock()
 	// Convert map to slice for sorting
 	var utxoList []utxoItem
 	for outpoint, entry := range utxos {
+
 		if _, isPending := pendingOutpoints[outpoint]; isPending {
 			continue
 		}
 		utxoList = append(utxoList, utxoItem{outpoint, entry})
 	}
+	pendingOutpointsMutex.Unlock()
 
 	// Sort by amount in descending order
 	sort.Slice(utxoList, func(i, j int) bool {
 		return utxoList[i].entry.Amount > utxoList[j].entry.Amount
 	})
-
-	pendingOutpointsMutex.Lock() // LOCK HERE
-	defer pendingOutpointsMutex.Unlock()
 
 	const maxInputs = 100
 
