@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -301,26 +302,43 @@ func selectUTXOs(utxos map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry, amou
 	selectedUTXOs = []*appmessage.UTXOsByAddressesEntry{}
 	selectedValue = uint64(0)
 
+	type utxoItem struct {
+		outpoint appmessage.RPCOutpoint
+		entry    *appmessage.RPCUTXOEntry
+	}
+
+	// Convert map to slice for sorting
+	var utxoList []utxoItem
+	for outpoint, entry := range utxos {
+		utxoList = append(utxoList, utxoItem{outpoint, entry})
+	}
+
+	// Sort by amount in descending order
+	sort.Slice(utxoList, func(i, j int) bool {
+		return utxoList[i].entry.Amount > utxoList[j].entry.Amount
+	})
+
 	pendingOutpointsMutex.Lock() // LOCK HERE
 	defer pendingOutpointsMutex.Unlock()
 
-	for outpoint, utxo := range utxos {
-		if _, isPending := pendingOutpoints[outpoint]; isPending {
+	const maxInputs = 100
+
+	for _, item := range utxoList {
+		if _, isPending := pendingOutpoints[item.outpoint]; isPending {
 			continue
 		}
 
-		outpointCopy := outpoint
+		outpointCopy := item.outpoint
 		selectedUTXOs = append(selectedUTXOs, &appmessage.UTXOsByAddressesEntry{
 			Outpoint:  &outpointCopy,
-			UTXOEntry: utxo,
+			UTXOEntry: item.entry,
 		})
-		selectedValue += utxo.Amount
+		selectedValue += item.entry.Amount
 
 		if selectedValue >= amountToSend {
 			break
 		}
 
-		const maxInputs = 100
 		if len(selectedUTXOs) == maxInputs {
 			log.Infof("Selected %d UTXOs so sending the transaction with %d sompis instead of %d", maxInputs, selectedValue, amountToSend)
 			break
