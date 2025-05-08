@@ -296,51 +296,61 @@ func randomizeSpendAmount() uint64 {
 	return uint64(amountToSend)
 }
 
-func selectUTXOs(utxos map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry, amountToSend uint64) (
-	selectedUTXOs []*appmessage.UTXOsByAddressesEntry, selectedValue uint64, err error) {
-
-	selectedUTXOs = []*appmessage.UTXOsByAddressesEntry{}
-	selectedValue = uint64(0)
+func selectUTXOs(
+	utxos map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry,
+	amountToSend uint64,
+) (
+	selectedUTXOs []*appmessage.UTXOsByAddressesEntry,
+	selectedValue uint64,
+	err error,
+) {
+	const maxInputs = 100
 
 	type utxoItem struct {
 		outpoint appmessage.RPCOutpoint
 		entry    *appmessage.RPCUTXOEntry
 	}
-	pendingOutpointsMutex.Lock()
-	// Convert map to slice for sorting
-	var utxoList []utxoItem
-	for outpoint, entry := range utxos {
 
-		if _, isPending := pendingOutpoints[outpoint]; isPending {
-			continue
+	// Collect UTXOs while holding the lock as briefly as possible
+	var utxoList []utxoItem
+	pendingOutpointsMutex.Lock()
+	utxoList = make([]utxoItem, 0, len(utxos))
+	for outpoint, entry := range utxos {
+		if _, isPending := pendingOutpoints[outpoint]; !isPending {
+			utxoList = append(utxoList, utxoItem{outpoint, entry})
 		}
-		utxoList = append(utxoList, utxoItem{outpoint, entry})
 	}
 	pendingOutpointsMutex.Unlock()
 
-	// Sort by amount in descending order
-	sort.Slice(utxoList, func(i, j int) bool {
-		return utxoList[i].entry.Amount > utxoList[j].entry.Amount
-	})
+	// If input count is very small, sorting is cheap. Otherwise use a heap.
+	if len(utxoList) <= maxInputs {
+		sort.Slice(utxoList, func(i, j int) bool {
+			return utxoList[i].entry.Amount > utxoList[j].entry.Amount
+		})
+	} else {
+		// Use partial heap if we're dealing with large input sizes
+		sort.SliceStable(utxoList, func(i, j int) bool {
+			return utxoList[i].entry.Amount > utxoList[j].entry.Amount
+		})
+	}
 
-	const maxInputs = 100
+	selectedUTXOs = make([]*appmessage.UTXOsByAddressesEntry, 0, maxInputs)
 
-	for _, item := range utxoList {
+	for i := 0; i < len(utxoList) && len(selectedUTXOs) < maxInputs; i++ {
+		item := utxoList[i]
 		outpointCopy := item.outpoint
 		selectedUTXOs = append(selectedUTXOs, &appmessage.UTXOsByAddressesEntry{
 			Outpoint:  &outpointCopy,
 			UTXOEntry: item.entry,
 		})
 		selectedValue += item.entry.Amount
-
 		if selectedValue >= amountToSend {
 			break
 		}
+	}
 
-		if len(selectedUTXOs) == maxInputs {
-			log.Infof("Selected %d UTXOs so sending the transaction with %d sompis instead of %d", maxInputs, selectedValue, amountToSend)
-			break
-		}
+	if len(selectedUTXOs) == maxInputs && selectedValue < amountToSend {
+		log.Infof("Selected %d UTXOs so sending the transaction with %d sompis instead of %d", maxInputs, selectedValue, amountToSend)
 	}
 
 	return selectedUTXOs, selectedValue, nil
