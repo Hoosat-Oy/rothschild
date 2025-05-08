@@ -310,6 +310,9 @@ func selectUTXOs(utxos map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry, amou
 	// Convert map to slice for sorting
 	var utxoList []utxoItem
 	for outpoint, entry := range utxos {
+		if _, isPending := pendingOutpoints[outpoint]; isPending {
+			continue
+		}
 		utxoList = append(utxoList, utxoItem{outpoint, entry})
 	}
 
@@ -324,10 +327,6 @@ func selectUTXOs(utxos map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry, amou
 	const maxInputs = 100
 
 	for _, item := range utxoList {
-		if _, isPending := pendingOutpoints[item.outpoint]; isPending {
-			continue
-		}
-
 		outpointCopy := item.outpoint
 		selectedUTXOs = append(selectedUTXOs, &appmessage.UTXOsByAddressesEntry{
 			Outpoint:  &outpointCopy,
