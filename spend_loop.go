@@ -322,6 +322,8 @@ func selectUTXOs(
 	}
 	pendingOutpointsMutex.Unlock()
 
+	log.Infof("Selectable UTXO count %d\n", len(utxoList))
+
 	// If input count is very small, sorting is cheap. Otherwise use a heap.
 	if len(utxoList) <= maxInputs {
 		sort.Slice(utxoList, func(i, j int) bool {
