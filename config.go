@@ -50,7 +50,7 @@ func parseConfig() error {
 		return err
 	}
 
-	cfg.ActiveNetParams = &dagconfig.TestnetParams
+	cfg.ActiveNetParams = &dagconfig.MainnetParams
 	if cfg.TransactionInterval == 0 {
 		cfg.TransactionInterval = 1000
 	}
