@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,7 +44,7 @@ func spendLoop(client *rpcclient.RPCClient, addresses *addressesList,
 		log.Infof("Initial UTXO count %d\n", len(utxos))
 
 		cfg := activeConfig()
-		ticker := time.NewTicker(time.Duration(cfg.TransactionInterval/2) * time.Millisecond) // Reduced interval for faster txs
+		ticker := time.NewTicker(time.Duration(cfg.TransactionInterval/2) * time.Millisecond) // Reduced for frequent checks
 		for range ticker.C {
 			healthChan := make(chan struct{})
 			go func() {
@@ -57,7 +58,6 @@ func spendLoop(client *rpcclient.RPCClient, addresses *addressesList,
 					os.Exit(1)
 				}
 			}()
-
 			hasFunds, err := maybeSendTransaction(client, addresses, utxos)
 			if err != nil {
 				panic(err)
@@ -122,8 +122,9 @@ func checkTransactions(utxosChangedNotificationChan <-chan *appmessage.UTXOsChan
 	}
 }
 
-const balanceEpsilon = 10_000            // 10,000 sompi = 0.0001 Hoosat
-const baseFeeAmount = balanceEpsilon * 5 // Reduced base fee for efficiency
+const balanceEpsilon = 10_000        // 10,000 sompi = 0.0001 Hoosat
+const feeAmount = balanceEpsilon * 5 // Reduced fee for efficiency
+const maxTxsPerTick = 100            // Number of transactions to send per tick
 
 var stats struct {
 	sync.Mutex
@@ -134,50 +135,55 @@ var stats struct {
 func maybeSendTransaction(client *rpcclient.RPCClient, addresses *addressesList,
 	availableUTXOs map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry) (hasFunds bool, err error) {
 
-	const maxTxsPerTick = 3 // Send up to 3 transactions per tick
-	hasFunds = false
+	selectedUTXOs, err := selectUTXOs(availableUTXOs)
+	if err != nil {
+		return false, err
+	}
 
-	for i := 0; i < maxTxsPerTick; i++ {
-		sendAmount := randomizeSpendAmount()
-		totalSendAmount := sendAmount + baseFeeAmount
+	if len(selectedUTXOs) == 0 {
+		return false, nil
+	}
 
-		selectedUTXOs, selectedValue, err := selectUTXOs(availableUTXOs, totalSendAmount)
-		if err != nil {
-			return hasFunds, err
-		}
+	// Limit to maxTxsPerTick
+	if len(selectedUTXOs) > maxTxsPerTick {
+		selectedUTXOs = selectedUTXOs[:maxTxsPerTick]
+	}
 
-		if len(selectedUTXOs) == 0 {
+	hasFunds = true
+	txsSent := 0
+
+	for i, utxo := range selectedUTXOs {
+		selectedValue := utxo.UTXOEntry.Amount
+		if selectedValue < 2*balanceEpsilon+feeAmount {
+			log.Infof("UTXO %s:%d has %d sompi, too small to split", utxo.Outpoint.TransactionID, utxo.Outpoint.Index, selectedValue)
 			continue
 		}
 
-		if selectedValue < baseFeeAmount {
+		// Split into two equal outputs minus fee
+		totalSendAmount := selectedValue - feeAmount
+		sendAmount := totalSendAmount / 2
+		change := totalSendAmount - sendAmount
+
+		// Ensure minimum amounts
+		if sendAmount < balanceEpsilon || change < balanceEpsilon {
+			log.Infof("Cannot split UTXO %s:%d (%d sompi) into two outputs >= %d sompi", utxo.Outpoint.TransactionID, utxo.Outpoint.Index, selectedValue, balanceEpsilon)
 			continue
 		}
 
-		// Adjust fee based on input count
-		feeAmount := baseFeeAmount + uint64(len(selectedUTXOs))*balanceEpsilon
-		if selectedValue < feeAmount {
-			continue
-		}
-
-		sendAmount = selectedValue - feeAmount
-		numOutputs := 2 // Fixed to 2 outputs for 1:2 transactions
-		outputAmount := sendAmount / uint64(numOutputs)
-		if outputAmount < balanceEpsilon {
-			outputAmount = balanceEpsilon
-		}
-		remainder := sendAmount % uint64(numOutputs)
-		// Distribute remainder to first output
-
-		spendAddress := randomizeSpendAddress(addresses)
-
+		// Both outputs to myAddress for splitting
 		rpcTransaction, err := generateTransaction(
-			addresses.myPrivateKey, selectedUTXOs, outputAmount, remainder, feeAmount, spendAddress, addresses.myAddress)
+			addresses.myPrivateKey, []*appmessage.UTXOsByAddressesEntry{utxo}, sendAmount, change, addresses.myAddress, addresses.myAddress)
 		if err != nil {
+			log.Warnf("Error generating transaction for UTXO %s:%d: %v", utxo.Outpoint.TransactionID, utxo.Outpoint.Index, err)
 			continue
 		}
 
-		setPending(availableUTXOs, selectedUTXOs)
+		if rpcTransaction.Outputs[0].Amount == 0 || rpcTransaction.Outputs[1].Amount == 0 {
+			log.Warnf("Got transaction with 0 value output for UTXO %s:%d", utxo.Outpoint.TransactionID, utxo.Outpoint.Index)
+			continue
+		}
+
+		setPending(availableUTXOs, []*appmessage.UTXOsByAddressesEntry{utxo})
 		spawn(fmt.Sprintf("sendTransaction-%d", i), func() {
 			transactionID, err := sendTransaction(client, rpcTransaction)
 			if err != nil {
@@ -186,16 +192,16 @@ func maybeSendTransaction(client *rpcclient.RPCClient, addresses *addressesList,
 					!strings.Contains(errMessage, "is already in the mempool") &&
 					!strings.Contains(errMessage, "is an orphan") &&
 					!strings.Contains(errMessage, "already spent by transaction") {
-					log.Errorf("Error sending transaction: %v", err)
+					log.Errorf("Error sending transaction for UTXO %s:%d: %v", utxo.Outpoint.TransactionID, utxo.Outpoint.Index, err)
 				}
+				unsetPending(availableUTXOs, []*appmessage.UTXOsByAddressesEntry{utxo})
 			} else {
-				log.Infof("Sent transaction %s worth %f hoosat with %d inputs and %d outputs", transactionID,
-					float64(sendAmount)/constants.SompiPerHoosat, len(rpcTransaction.Inputs), len(rpcTransaction.Outputs))
-				unsetPending(availableUTXOs, selectedUTXOs)
+				log.Infof("Sent transaction %s worth %f hoosat with 1 input and 2 outputs (UTXO %s:%d)", transactionID,
+					float64(totalSendAmount)/constants.SompiPerHoosat, utxo.Outpoint.TransactionID, utxo.Outpoint.Index)
+				unsetPending(availableUTXOs, []*appmessage.UTXOsByAddressesEntry{utxo})
 				func() {
 					stats.Lock()
 					defer stats.Unlock()
-
 					stats.numTxs++
 					timePast := time.Since(stats.since)
 					if timePast > 10*time.Second {
@@ -206,10 +212,10 @@ func maybeSendTransaction(client *rpcclient.RPCClient, addresses *addressesList,
 				}()
 			}
 		})
-
-		hasFunds = true
+		txsSent++
 	}
 
+	log.Infof("Sent %d transactions in this tick", txsSent)
 	return hasFunds, nil
 }
 
@@ -269,7 +275,6 @@ func unsetPending(availableUTXOs map[appmessage.RPCOutpoint]*appmessage.RPCUTXOE
 
 func filterSpentUTXOsAndCalculateBalance(utxos []*appmessage.UTXOsByAddressesEntry) (
 	filteredUTXOs []*appmessage.UTXOsByAddressesEntry, balance uint64) {
-
 	balance = 0
 	for _, utxo := range utxos {
 		if _, ok := pendingOutpoints[*utxo.Outpoint]; ok {
@@ -287,8 +292,8 @@ func randomizeSpendAddress(addresses *addressesList) util.Address {
 }
 
 func randomizeSpendAmount() uint64 {
-	const maxAmountToSend = 20 * balanceEpsilon // Reduced max amount for more granular splits
-	amountToSend := rand.Int63n(int64(maxAmountToSend))
+	const maxAmountToSent = 10 * feeAmount
+	amountToSend := rand.Int63n(int64(maxAmountToSent))
 	amountToSend = amountToSend / balanceEpsilon * balanceEpsilon
 	if amountToSend < balanceEpsilon {
 		amountToSend = balanceEpsilon
@@ -298,15 +303,11 @@ func randomizeSpendAmount() uint64 {
 
 func selectUTXOs(
 	utxos map[appmessage.RPCOutpoint]*appmessage.RPCUTXOEntry,
-	amountToSend uint64,
 ) (
 	selectedUTXOs []*appmessage.UTXOsByAddressesEntry,
-	selectedValue uint64,
 	err error,
 ) {
-	const maxInputs = 50 // Reduced max inputs for efficiency
-
-	// Sort UTXOs by amount (ascending) to prefer smaller UTXOs
+	// Collect all non-pending UTXOs
 	type utxoPair struct {
 		outpoint appmessage.RPCOutpoint
 		entry    *appmessage.RPCUTXOEntry
@@ -317,47 +318,40 @@ func selectUTXOs(
 		if _, isPending := pendingOutpoints[outpoint]; isPending {
 			continue
 		}
-		utxoList = append(utxoList, utxoPair{outpoint, entry})
+		if entry.Amount >= 2*balanceEpsilon+feeAmount {
+			utxoList = append(utxoList, utxoPair{outpoint, entry})
+		}
 	}
 	pendingOutpointsMutex.Unlock()
 
-	// Sort by amount (smallest first)
-	for i := 0; i < len(utxoList)-1; i++ {
-		for j := i + 1; j < len(utxoList); j++ {
-			if utxoList[i].entry.Amount > utxoList[j].entry.Amount {
-				utxoList[i], utxoList[j] = utxoList[j], utxoList[i]
-			}
-		}
+	if len(utxoList) == 0 {
+		return nil, nil
 	}
 
-	selectedUTXOs = make([]*appmessage.UTXOsByAddressesEntry, 0, maxInputs)
-	selectedValue = 0
+	// Sort by amount descending (largest first)
+	sort.Slice(utxoList, func(i, j int) bool {
+		return utxoList[i].entry.Amount > utxoList[j].entry.Amount
+	})
 
-	for _, pair := range utxoList {
-		outpointCopy := pair.outpoint
+	// Select up to maxTxsPerTick UTXOs
+	n := len(utxoList)
+	if n > maxTxsPerTick {
+		n = maxTxsPerTick
+	}
+	selectedUTXOs = make([]*appmessage.UTXOsByAddressesEntry, 0, n)
+	for i := 0; i < n; i++ {
 		selectedUTXOs = append(selectedUTXOs, &appmessage.UTXOsByAddressesEntry{
-			Outpoint:  &outpointCopy,
-			UTXOEntry: pair.entry,
+			Outpoint:  &utxoList[i].outpoint,
+			UTXOEntry: utxoList[i].entry,
 		})
-		selectedValue += pair.entry.Amount
-
-		if selectedValue >= amountToSend {
-			break
-		}
-
-		if len(selectedUTXOs) == maxInputs {
-			log.Infof("Selected %d UTXOs with %d sompis instead of %d", maxInputs, selectedValue, amountToSend)
-			break
-		}
 	}
 
-	return selectedUTXOs, selectedValue, nil
+	return selectedUTXOs, nil
 }
 
 func generateTransaction(keyPair *secp256k1.SchnorrKeyPair, selectedUTXOs []*appmessage.UTXOsByAddressesEntry,
-	baseOutputAmount uint64, remainder uint64, feeAmount uint64, toAddress util.Address,
+	sompisToSend uint64, change uint64, toAddress util.Address,
 	fromAddress util.Address) (*appmessage.RPCTransaction, error) {
-
 	inputs := make([]*externalapi.DomainTransactionInput, len(selectedUTXOs))
 	for i, utxo := range selectedUTXOs {
 		outpointTransactionIDBytes, err := hex.DecodeString(utxo.Outpoint.TransactionID)
@@ -392,29 +386,20 @@ func generateTransaction(keyPair *secp256k1.SchnorrKeyPair, selectedUTXOs []*app
 		}
 	}
 
-	outputs := make([]*externalapi.DomainTransactionOutput, 0, 2)
-
-	// First output to spend address
-	toScript, err := txscript.PayToAddrScript(toAddress)
-	if err != nil {
-		return nil, err
-	}
-	firstOutputAmount := baseOutputAmount + remainder
-	outputs = append(outputs, &externalapi.DomainTransactionOutput{
-		Value:           firstOutputAmount,
-		ScriptPublicKey: toScript,
-	})
-
-	// Second output to from address (change/split)
 	fromScript, err := txscript.PayToAddrScript(fromAddress)
 	if err != nil {
 		return nil, err
 	}
-	secondOutputAmount := baseOutputAmount
-	outputs = append(outputs, &externalapi.DomainTransactionOutput{
-		Value:           secondOutputAmount,
+	// Two outputs to myAddress for splitting
+	mainOutput := &externalapi.DomainTransactionOutput{
+		Value:           sompisToSend,
 		ScriptPublicKey: fromScript,
-	})
+	}
+	changeOutput := &externalapi.DomainTransactionOutput{
+		Value:           change,
+		ScriptPublicKey: fromScript,
+	}
+	outputs := []*externalapi.DomainTransactionOutput{mainOutput, changeOutput}
 
 	domainTransaction := &externalapi.DomainTransaction{
 		Version:      constants.MaxTransactionVersion,
